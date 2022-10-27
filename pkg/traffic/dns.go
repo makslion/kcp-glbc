@@ -35,6 +35,7 @@ type DnsReconciler struct {
 	ForgetHost       func(key interface{}, host string)
 	ListHostWatchers func(key interface{}) []dns.RecordWatcher
 	DNSLookup        func(ctx context.Context, host string) ([]dns.HostAddress, error)
+	ManagedDomain    string
 	Log              logr.Logger
 }
 
@@ -43,6 +44,7 @@ func (r *DnsReconciler) GetName() string {
 }
 
 func (r *DnsReconciler) Reconcile(ctx context.Context, accessor Interface) (ReconcileStatus, error) {
+	r.Log.Info("BOOP start dns reconciler")
 	if accessor.GetDeletionTimestamp() != nil && !accessor.GetDeletionTimestamp().IsZero() {
 		if err := r.DeleteDNS(ctx, accessor); err != nil && !k8errors.IsNotFound(err) {
 			return ReconcileStatusStop, err
@@ -51,16 +53,70 @@ func (r *DnsReconciler) Reconcile(ctx context.Context, accessor Interface) (Reco
 	}
 
 	key := objectKey(accessor)
-	managedHost := accessor.GetAnnotations()[ANNOTATION_HCG_HOST]
 	var activeLBHosts []string
+
+	// clean up any watchers no longer needed
+	hostRecordWatchers := r.ListHostWatchers(key)
+	for _, watcher := range hostRecordWatchers {
+		if !slice.ContainsString(activeLBHosts, watcher.Host) {
+			r.ForgetHost(key, watcher.Host)
+		}
+	}
+	// Attempt to retrieve the existing DNSRecord for this traffic object
+	existing, err := r.GetDNS(ctx, accessor)
+	r.Log.Info("BOOP checking if dns exists: " + strconv.FormatBool(!k8errors.IsNotFound(err)))
+	r.Log.Info("BOOP error is nil: " + strconv.FormatBool(err == nil))
+	// If it doesn't exist, create it
+	if err != nil {
+		if !k8errors.IsNotFound(err) {
+			r.Log.Info("BOOP stopping reconciler")
+			return ReconcileStatusStop, err
+		}
+		r.Log.Info("BOOP creating dns from object")
+		record, err := newDNSRecordForObject(accessor)
+		if err != nil {
+			r.Log.Info("BOOP error creating dns from object")
+			return ReconcileStatusContinue, err
+		}
+		r.Log.Info("BOOP adding host annotations: " + r.ManagedDomain)
+		AddHostAnnotations(record, r.ManagedDomain)
+		r.Log.Info("BOOP host annotation: " + record.Annotations[ANNOTATION_HCG_HOST])
+		//r.setEndpointFromTargets(managedHost, activeDNSTargetIPs, record)
+		// Create the resource in the cluster
+		//if len(record.Spec.Endpoints) > 0 {
+		r.Log.V(3).Info("creating DNSRecord ", "record", record.Name)
+		r.Log.Info("BOOP creating dns record cr")
+		existing, err = r.CreateDNS(ctx, record)
+		if err != nil {
+			r.Log.Info("BOOP error creating dns record cr: " + err.Error())
+			return ReconcileStatusContinue, err
+		}
+		// metric to observe the accessor admission time
+		IngressObjectTimeToAdmission.Observe(existing.CreationTimestamp.Time.Sub(accessor.GetCreationTimestamp().Time).Seconds()) // TODO figure out this one
+		//}
+		return ReconcileStatusContinue, nil
+	}
+
+	// If it does exist, update it
 	activeDNSTargetIPs := map[string][]string{}
 	deletingTargetIPs := map[string][]string{}
-
-	targets, err := accessor.GetTargets(ctx, r.DNSLookup)
+	managedHost, err := accessor.GetHCGhost(ctx, r.GetDNS)
+	if err != nil {
+		r.Log.Info("BOOP dns reconciler error1: " + err.Error())
+		if k8errors.IsNotFound(err) {
+			r.Log.Info("BOOP error is not found")
+			return ReconcileStatusContinue, nil
+		}
+		return ReconcileStatusStop, nil
+	}
+	r.Log.Info("BOOP managedHost: " + managedHost)
+	r.Log.Info("BOOP getting targets")
+	initialTargets, err := accessor.GetTargets(ctx, r.DNSLookup)
 	if err != nil {
 		return ReconcileStatusContinue, err
 	}
-	for cluster, targets := range targets {
+	for cluster, targets := range initialTargets {
+		r.Log.Info("BOOP iterating through targets. Length: " + strconv.Itoa(len(initialTargets)))
 		deleteAnnotation := workload.InternalClusterDeletionTimestampAnnotationPrefix + cluster.String()
 		if metadata.HasAnnotation(accessor, deleteAnnotation) {
 			for host, target := range targets {
@@ -69,6 +125,7 @@ func (r *DnsReconciler) Reconcile(ctx context.Context, accessor Interface) (Reco
 			continue
 		}
 		for host, target := range targets {
+			r.Log.Info("BOOP iterating through sub targets. Length: " + strconv.Itoa(len(targets)))
 			if metadata.HasAnnotation(accessor, deleteAnnotation) {
 				continue
 			}
@@ -79,44 +136,14 @@ func (r *DnsReconciler) Reconcile(ctx context.Context, accessor Interface) (Reco
 			activeDNSTargetIPs[host] = append(activeDNSTargetIPs[host], target.Value...)
 		}
 	}
+	r.Log.Info("BOOP checking lengths")
 
 	// no non-deleting hosts have an IP yet, so continue using IPs of "losing" clusters
 	if len(activeDNSTargetIPs) == 0 && len(deletingTargetIPs) > 0 {
 		r.Log.V(3).Info("setting the dns Target to the deleting Target as no new dns targets set yet")
 		activeDNSTargetIPs = deletingTargetIPs
 	}
-	// clean up any watchers no longer needed
-	hostRecordWatchers := r.ListHostWatchers(key)
-	for _, watcher := range hostRecordWatchers {
-		if !slice.ContainsString(activeLBHosts, watcher.Host) {
-			r.ForgetHost(key, watcher.Host)
-		}
-	}
-	// Attempt to retrieve the existing DNSRecord for this Ingress
-	existing, err := r.GetDNS(ctx, accessor)
-	// If it doesn't exist, create it
-	if err != nil {
-		if !k8errors.IsNotFound(err) {
-			return ReconcileStatusStop, err
-		}
-		record, err := newDNSRecordForObject(accessor)
-		if err != nil {
-			return ReconcileStatusContinue, err
-		}
-		r.setEndpointFromTargets(managedHost, activeDNSTargetIPs, record)
-		// Create the resource in the cluster
-		if len(record.Spec.Endpoints) > 0 {
-			r.Log.V(3).Info("creating DNSRecord ", "record", record.Name, "endpoints for DNSRecord", record.Spec.Endpoints)
-			existing, err = r.CreateDNS(ctx, record)
-			if err != nil {
-				return ReconcileStatusContinue, err
-			}
-			// metric to observe the accessor admission time
-			IngressObjectTimeToAdmission.Observe(existing.CreationTimestamp.Time.Sub(accessor.GetCreationTimestamp().Time).Seconds())
-		}
-		return ReconcileStatusContinue, nil
-	}
-	// If it does exist, update it
+
 	copyDNS := existing.DeepCopy()
 	r.setEndpointFromTargets(managedHost, activeDNSTargetIPs, copyDNS)
 	if !equality.Semantic.DeepEqual(copyDNS, existing) {

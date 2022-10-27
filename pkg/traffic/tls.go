@@ -3,6 +3,7 @@ package traffic
 import (
 	"context"
 	"fmt"
+	v1 "github.com/kuadrant/kcp-glbc/pkg/apis/kuadrant/v1"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ type CertificateReconciler struct {
 	CopySecret           func(ctx context.Context, workspace logicalcluster.Name, namespace string, s *corev1.Secret) error
 	GetSecret            func(ctx context.Context, name, namespace string, cluster logicalcluster.Name) (*corev1.Secret, error)
 	DeleteSecret         func(ctx context.Context, workspace logicalcluster.Name, namespace, name string) error
+	GetDNS               func(ctx context.Context, accessor Interface) (*v1.DNSRecord, error)
 	Log                  logr.Logger
 }
 
@@ -147,13 +149,22 @@ func TLSSecretName(accessor Interface) string {
 }
 
 func (r *CertificateReconciler) Reconcile(ctx context.Context, accessor Interface) (ReconcileStatus, error) {
+	r.Log.Info("BOOP cert reconciler")
 	annotations := map[string]string{}
 	labels := map[string]string{
 		basereconciler.LABEL_HCG_MANAGED: "true",
 	}
 	key, err := cache.MetaNamespaceKeyFunc(accessor)
 
-	managedHost := accessor.GetAnnotations()[ANNOTATION_HCG_HOST]
+	managedHost, err := accessor.GetHCGhost(ctx, r.GetDNS)
+	if err != nil {
+		r.Log.Info("BOOP cert reconciler error1: " + err.Error())
+		if errors.IsNotFound(err) {
+			r.Log.Info("BOOP error is not found")
+			return ReconcileStatusContinue, nil
+		}
+	}
+	r.Log.Info("BOOP managedHost: " + managedHost)
 
 	if err != nil {
 		return ReconcileStatusStop, err

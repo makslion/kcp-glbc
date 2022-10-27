@@ -32,6 +32,7 @@ const (
 )
 
 type dnsLookupFunc func(ctx context.Context, host string) ([]dns.HostAddress, error)
+type getDNSrecordFunc func(ctx context.Context, accessor Interface) (*v1.DNSRecord, error)
 type CreateOrUpdateTraffic func(ctx context.Context, i Interface) error
 type DeleteTraffic func(ctx context.Context, i Interface) error
 
@@ -40,13 +41,14 @@ type Interface interface {
 	metav1.Object
 	GetKind() string
 	GetHosts() []string
+	GetHCGhost(context.Context, getDNSrecordFunc) (string, error)
 	GetTargets(ctx context.Context, dnsLookup dnsLookupFunc) (map[logicalcluster.Name]map[string]dns.Target, error)
 	GetLogicalCluster() logicalcluster.Name
 	GetNamespaceName() types.NamespacedName
 	AddTLS(host string, secret *corev1.Secret)
 	RemoveTLS(host []string)
 	ReplaceCustomHosts(managedHost string) []string
-	ProcessCustomHosts(context.Context, *v1.DomainVerificationList, CreateOrUpdateTraffic, DeleteTraffic) error
+	ProcessCustomHosts(context.Context, *v1.DomainVerificationList, CreateOrUpdateTraffic, DeleteTraffic, getDNSrecordFunc) error
 }
 
 type Pending struct {

@@ -90,7 +90,6 @@ func TestIngress(t *testing.T) {
 	// Wait until the Ingress is reconciled with the load balancer Ingresses
 	test.Eventually(Ingress(test, namespace, name)).WithTimeout(TestTimeoutMedium).Should(And(
 		WithTransform(Annotations, And(
-			HaveKey(traffic.ANNOTATION_HCG_HOST),
 			HaveKey(traffic.ANNOTATION_PENDING_CUSTOM_HOSTS),
 		)),
 		WithTransform(Labels, And(
@@ -114,14 +113,18 @@ func TestIngress(t *testing.T) {
 		}
 	}
 
+	dnsRecord := GetDNSRecord(test, namespace, name)
 	// Check a DNSRecord for the Ingress is created with the expected Spec
 	test.Eventually(DNSRecord(test, namespace, name)).Should(And(
 		// ensure the ingress certificate is marked as ready when the DNSrecord is created
 		WithTransform(DNSRecordToIngressCertReady(test, namespace, name), Equal("ready")),
 		WithTransform(DNSRecordEndpoints, HaveLen(1)),
+		WithTransform(Annotations, And(
+			HaveKey(traffic.ANNOTATION_HCG_HOST),
+		)),
 		WithTransform(DNSRecordEndpoints, ContainElement(MatchFieldsP(IgnoreExtras,
 			Fields{
-				"DNSName":          Equal(ingress.Annotations[traffic.ANNOTATION_HCG_HOST]),
+				"DNSName":          Equal(dnsRecord.Annotations[traffic.ANNOTATION_HCG_HOST]),
 				"Targets":          ConsistOf(ingressStatus.LoadBalancer.Ingress[0].IP),
 				"RecordType":       Equal("A"),
 				"RecordTTL":        Equal(kuadrantv1.TTL(60)),

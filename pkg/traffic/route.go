@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	k8errors "k8s.io/apimachinery/pkg/api/errors"
 	"strings"
 
 	"github.com/kcp-dev/logicalcluster/v2"
@@ -39,6 +40,14 @@ func (a *Route) GetHosts() []string {
 	return []string{
 		a.Route.Spec.Host,
 	}
+}
+
+func (a *Route) GetHCGhost(ctx context.Context, getDNSfunc getDNSrecordFunc) (string, error) {
+	record, err := getDNSfunc(ctx, a)
+	if err != nil {
+		return "", err
+	}
+	return metadata.GetAnnotation(record, ANNOTATION_HCG_HOST), nil
 }
 
 func (a *Route) AddTLS(host string, secret *corev1.Secret) {
@@ -101,8 +110,14 @@ func (a *Route) GetTargets(ctx context.Context, dnsLookup dnsLookupFunc) (map[lo
 	return targets, nil
 }
 
-func (a *Route) ProcessCustomHosts(ctx context.Context, dvs *v1.DomainVerificationList, createOrUpdate CreateOrUpdateTraffic, delete DeleteTraffic) error {
-	generatedHost := metadata.GetAnnotation(a.Route, ANNOTATION_HCG_HOST)
+func (a *Route) ProcessCustomHosts(ctx context.Context, dvs *v1.DomainVerificationList, createOrUpdate CreateOrUpdateTraffic, delete DeleteTraffic, recordFunc getDNSrecordFunc) error {
+	generatedHost, err := a.GetHCGhost(ctx, recordFunc)
+	if err != nil || generatedHost == "" {
+		if k8errors.IsNotFound(err) {
+			return nil
+		}
+		return ErrGeneratedHostMissing
+	}
 
 	//don't process custom hosts for shadows
 	if metadata.HasAnnotation(a.Route, ANNOTATION_IS_GLBC_SHADOW) {
@@ -142,7 +157,6 @@ func (a *Route) ProcessCustomHosts(ctx context.Context, dvs *v1.DomainVerificati
 		// prepopulate generatedhost in spec and annotation on the shadow
 		shadow.Spec.Host = generatedHost
 		shadow.Name = a.GetName() + "-shadow"
-		metadata.AddAnnotation(shadow, ANNOTATION_HCG_HOST, generatedHost)
 		metadata.AddAnnotation(shadow, ANNOTATION_IS_GLBC_SHADOW, "true")
 		metadata.RemoveAnnotation(shadow, ANNOTATION_PENDING_CUSTOM_HOSTS)
 		t := true

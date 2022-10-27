@@ -124,9 +124,8 @@ type Endpoint struct {
 
 // DNSRecordSpec contains the details of a DNS record.
 type DNSRecordSpec struct {
-	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
-	// +required
+	// +optional
 	Endpoints []*Endpoint `json:"endpoints"`
 }
 

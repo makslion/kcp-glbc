@@ -26,13 +26,12 @@ func (c *Controller) reconcile(ctx context.Context, route *traffic.Route) error 
 	reconcilers := []traffic.Reconciler{
 		//hostReconciler is first as the others depends on it for the host to be set on the route
 		&traffic.HostReconciler{
-			ManagedDomain:          c.domain,
 			Log:                    c.Logger,
 			CustomHostsEnabled:     c.customHostsEnabled,
-			KuadrantClient:         c.kuadrantClient,
 			GetDomainVerifications: c.getDomainVerifications,
 			CreateOrUpdateTraffic:  c.createOrUpdateRoute,
 			DeleteTraffic:          c.deleteRoute,
+			GetDNS:                 c.getDNS,
 		},
 		&traffic.CertificateReconciler{
 			Log:                  c.Logger,
@@ -43,6 +42,7 @@ func (c *Controller) reconcile(ctx context.Context, route *traffic.Route) error 
 			GetCertificateStatus: c.certProvider.GetCertificateStatus,
 			CopySecret:           c.copySecret,
 			DeleteSecret:         c.deleteTLSSecret,
+			GetDNS:               c.getDNS,
 			GetSecret:            c.getSecret,
 		},
 		&traffic.DnsReconciler{
@@ -54,6 +54,7 @@ func (c *Controller) reconcile(ctx context.Context, route *traffic.Route) error 
 			WatchHost:        c.hostsWatcher.StartWatching,
 			ForgetHost:       c.hostsWatcher.StopWatching,
 			ListHostWatchers: c.hostsWatcher.ListHostRecordWatchers,
+			ManagedDomain:    c.domain,
 			Log:              c.Logger,
 		},
 	}

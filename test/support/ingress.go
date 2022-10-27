@@ -74,17 +74,6 @@ func IngressTLS(ingress *networkingv1.Ingress) []networkingv1.IngressTLS {
 	return ingress.Spec.TLS
 }
 
-// HostsEqualsToGeneratedHost checks Ingress hosts are the same as the generated hosts
-func HostsEqualsToGeneratedHost(ingress *networkingv1.Ingress) bool {
-	equals := true
-	for _, rule := range ingress.Spec.Rules {
-		if rule.Host != Annotations(ingress)[traffic.ANNOTATION_HCG_HOST] {
-			equals = false
-		}
-	}
-	return equals
-}
-
 // IngressHosts returns each unique host used in the rules
 func IngressHosts(ingress *networkingv1.Ingress) map[string]string {
 	hosts := map[string]string{}

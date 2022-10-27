@@ -143,14 +143,11 @@ func TestMetrics(t *testing.T) {
 	test.Eventually(Ingress(test, namespace, name)).WithTimeout(TestTimeoutMedium).Should(And(
 		// Host spec
 		WithTransform(Annotations, And(
-			HaveKey(traffic.ANNOTATION_HCG_HOST),
 			HaveKey(traffic.ANNOTATION_PENDING_CUSTOM_HOSTS),
 		)),
 		WithTransform(Labels, And(
 			HaveKey(traffic.LABEL_HAS_PENDING_HOSTS),
 		)),
-		// Rules spec
-		Satisfy(HostsEqualsToGeneratedHost),
 		// TLS certificate spec
 		Satisfy(HasTLSSecretForGeneratedHost(secretName)),
 		// Load balancer status
@@ -180,12 +177,14 @@ func TestMetrics(t *testing.T) {
 	}
 	test.Expect(err).NotTo(HaveOccurred())
 
+	record := GetDNSRecord(test, namespace, name)
 	// Check a DNSRecord for the Ingress is updated with the expected Spec
 	test.Eventually(DNSRecord(test, namespace, name)).WithTimeout(TestTimeoutShort * 2).Should(And(
+		HaveKey(traffic.ANNOTATION_HCG_HOST),
 		WithTransform(DNSRecordEndpoints, HaveLen(1)),
 		WithTransform(DNSRecordEndpoints, ContainElement(MatchFieldsP(IgnoreExtras,
 			Fields{
-				"DNSName":          Equal(ingress.Annotations[traffic.ANNOTATION_HCG_HOST]),
+				"DNSName":          Equal(record.Annotations[traffic.ANNOTATION_HCG_HOST]),
 				"Targets":          ConsistOf(ingressStatus.LoadBalancer.Ingress[0].IP),
 				"RecordType":       Equal("A"),
 				"RecordTTL":        Equal(kuadrantv1.TTL(60)),

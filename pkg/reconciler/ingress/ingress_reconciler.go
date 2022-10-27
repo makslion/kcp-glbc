@@ -29,13 +29,12 @@ func (c *Controller) reconcile(ctx context.Context, ingress traffic.Interface) e
 	reconcilers := []traffic.Reconciler{
 		//hostReconciler is first as the others depends on it for the host to be set on the ingress
 		&traffic.HostReconciler{
-			ManagedDomain:          c.domain,
 			Log:                    c.Logger,
 			CustomHostsEnabled:     c.customHostsEnabled,
-			KuadrantClient:         c.kuadrantClient,
 			GetDomainVerifications: c.getDomainVerifications,
 			CreateOrUpdateTraffic:  c.createOrUpdateIngress,
 			DeleteTraffic:          c.deleteRoute,
+			GetDNS:                 c.getDNS,
 		},
 		&traffic.CertificateReconciler{
 			CreateCertificate:    c.certProvider.Create,
@@ -46,6 +45,7 @@ func (c *Controller) reconcile(ctx context.Context, ingress traffic.Interface) e
 			CopySecret:           c.copySecret,
 			GetSecret:            c.getSecret,
 			DeleteSecret:         c.deleteTLSSecret,
+			GetDNS:               c.getDNS,
 			Log:                  c.Logger,
 		},
 		&traffic.DnsReconciler{
@@ -57,6 +57,7 @@ func (c *Controller) reconcile(ctx context.Context, ingress traffic.Interface) e
 			WatchHost:        c.hostsWatcher.StartWatching,
 			ForgetHost:       c.hostsWatcher.StopWatching,
 			ListHostWatchers: c.hostsWatcher.ListHostRecordWatchers,
+			ManagedDomain:    c.domain,
 			Log:              c.Logger,
 		},
 	}

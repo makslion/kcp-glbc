@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	k8errors "k8s.io/apimachinery/pkg/api/errors"
 	"strings"
 
 	"github.com/kcp-dev/logicalcluster/v2"
@@ -40,6 +41,14 @@ func (a *Ingress) GetHosts() []string {
 	}
 
 	return hosts
+}
+
+func (a *Ingress) GetHCGhost(ctx context.Context, getDNSfunc getDNSrecordFunc) (string, error) {
+	record, err := getDNSfunc(ctx, a)
+	if err != nil {
+		return "", err
+	}
+	return metadata.GetAnnotation(record, ANNOTATION_HCG_HOST), nil
 }
 
 func (a *Ingress) AddTLS(host string, secret *corev1.Secret) {
@@ -155,9 +164,12 @@ func (a *Ingress) getStatuses() (map[logicalcluster.Name]networkingv1.IngressSta
 	return statuses, nil
 }
 
-func (a *Ingress) ProcessCustomHosts(_ context.Context, dvs *v1.DomainVerificationList, _ CreateOrUpdateTraffic, _ DeleteTraffic) error {
-	generatedHost, ok := a.GetAnnotations()[ANNOTATION_HCG_HOST]
-	if !ok || generatedHost == "" {
+func (a *Ingress) ProcessCustomHosts(ctx context.Context, dvs *v1.DomainVerificationList, _ CreateOrUpdateTraffic, _ DeleteTraffic, recordFunc getDNSrecordFunc) error {
+	generatedHost, err := a.GetHCGhost(ctx, recordFunc)
+	if err != nil || generatedHost == "" {
+		if k8errors.IsNotFound(err) {
+			return nil
+		}
 		return ErrGeneratedHostMissing
 	}
 

@@ -112,11 +112,7 @@ func TestIngressBasic(t Test, ingressCount int, zoneID, glbcDomain string) {
 	for _, ingress := range ingresses {
 		tlsSecretName := fmt.Sprintf("hcg-tls-ingress-%s", ingress.Name)
 		t.Eventually(Ingress(t, namespace, ingress.Name)).WithTimeout(TestTimeoutMedium).Should(And(
-			WithTransform(Annotations, And(
-				HaveKey(traffic.ANNOTATION_HCG_HOST),
-			)),
 			WithTransform(LoadBalancerIngresses, HaveLen(1)),
-			Satisfy(HostsEqualsToGeneratedHost),
 			Satisfy(HasTLSSecretForGeneratedHost(tlsSecretName)),
 		))
 
@@ -131,6 +127,7 @@ func TestIngressBasic(t Test, ingressCount int, zoneID, glbcDomain string) {
 			))
 		}
 	}
+	t.T().Log("Ingress asserted. Checking DNS record")
 
 	// Retrieve DNSRecords
 	t.Eventually(DNSRecords(t, namespace, "")).Should(HaveLen(ingressCount))
@@ -141,6 +138,9 @@ func TestIngressBasic(t Test, ingressCount int, zoneID, glbcDomain string) {
 	for _, record := range dnsRecords {
 		t.Eventually(DNSRecord(t, namespace, record.Name)).Should(And(
 			WithTransform(DNSRecordEndpointsCount, BeNumerically(">=", 1)),
+			WithTransform(Annotations, And(
+				HaveKey(traffic.ANNOTATION_HCG_HOST),
+			)),
 			WithTransform(DNSRecordCondition(zoneID, kuadrantv1.DNSRecordFailedConditionType), MatchFieldsP(IgnoreExtras,
 				Fields{
 					"Status":  Equal("False"),
@@ -150,6 +150,7 @@ func TestIngressBasic(t Test, ingressCount int, zoneID, glbcDomain string) {
 		))
 	}
 
+	t.T().Log("DNS record asserted. Checking TLS secrets")
 	// Retrieve TLS Secrets
 	t.Eventually(Secrets(t, namespace, "kuadrant.dev/hcg.managed=true")).WithTimeout(
 		TestTimeoutLong).Should(HaveLen(ingressCount))

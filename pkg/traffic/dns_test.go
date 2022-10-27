@@ -57,8 +57,7 @@ func TestDNSReconciler(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: fmt.Sprintf("ingress-%d", i),
 					Annotations: map[string]string{
-						ANNOTATION_HCG_HOST: managedHost,
-						"kcp.dev/cluster":   "somecluster",
+						"kcp.dev/cluster": "somecluster",
 					},
 				},
 			}
@@ -92,9 +91,6 @@ func TestDNSReconciler(t *testing.T) {
 		return func(dns *v1.DNSRecord) error {
 			if dns == nil {
 				return fmt.Errorf("did not expect a nil dns record")
-			}
-			if len(dns.Spec.Endpoints) != 1 {
-				return fmt.Errorf("expected only 1 dns endpoint but got %d", len(dns.Spec.Endpoints))
 			}
 			for _, ep := range dns.Spec.Endpoints {
 				if len(ep.Targets) != len(expectedIPs) {

@@ -22,6 +22,7 @@ type hostResult struct {
 }
 
 func TestReconcileHost(t *testing.T) {
+	generatedHost := "123.test.com"
 	accessor := func(rules []networkingv1.IngressRule, tls []networkingv1.IngressTLS) Interface {
 		i := &networkingv1.Ingress{
 			Spec: networkingv1.IngressSpec{
@@ -41,66 +42,54 @@ func TestReconcileHost(t *testing.T) {
 			Accessor: a,
 		}
 	}
-	var managedDomain = "test.com"
 
-	var commonValidation = func(hr hostResult, expectedStatus ReconcileStatus) error {
+	var commonValidation = func(hr hostResult, expectedStatus ReconcileStatus, getDNSfunc getDNSrecordFunc) error {
 		if hr.Status != expectedStatus {
 			return fmt.Errorf("unexpected status ")
 		}
 		if hr.Err != nil {
 			return fmt.Errorf("unexpected error from Reconcile : %s", hr.Err)
 		}
-		if !metadata.HasAnnotation(hr.Accessor, ANNOTATION_HCG_HOST) {
+		host, err := hr.Accessor.GetHCGhost(context.TODO(), getDNSfunc)
+		if err != nil {
+			return fmt.Errorf("unexpected error getting generated host annotation: %s", err)
+		}
+		if host == "" {
 			return fmt.Errorf("expected annotation %s to be set", ANNOTATION_HCG_HOST)
 		}
 		return nil
 	}
 
 	cases := []struct {
-		Name     string
-		Accessor func() Interface
-		Validate func(hr hostResult) error
+		Name       string
+		Accessor   func() Interface
+		GetDNSfunc getDNSrecordFunc
+		Validate   func(hr hostResult, getDNSfunc getDNSrecordFunc) error
 	}{
-		{
-			Name: "test managed host generated for empty host field",
-			Accessor: func() Interface {
-				return accessor([]networkingv1.IngressRule{{
-					IngressRuleValue: networkingv1.IngressRuleValue{
-						HTTP: &networkingv1.HTTPIngressRuleValue{},
-					},
-				}, {
-					IngressRuleValue: networkingv1.IngressRuleValue{
-						HTTP: &networkingv1.HTTPIngressRuleValue{},
-					},
-				}}, []networkingv1.IngressTLS{})
-
-			},
-			Validate: func(hr hostResult) error {
-				return commonValidation(hr, ReconcileStatusStop)
-			},
-		},
 		{
 			Name: "test custom host replaced with generated managed host",
 			Accessor: func() Interface {
 				a := accessor([]networkingv1.IngressRule{{
 					Host: "api.example.com",
 				}}, []networkingv1.IngressTLS{})
-
-				metadata.AddAnnotation(a, ANNOTATION_HCG_HOST, "123.test.com")
-
 				return a
 			},
-			Validate: func(hr hostResult) error {
-				err := commonValidation(hr, ReconcileStatusContinue)
+			GetDNSfunc: func(ctx context.Context, i Interface) (*v1.DNSRecord, error) {
+				return &v1.DNSRecord{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							ANNOTATION_HCG_HOST: generatedHost,
+						},
+					},
+				}, nil
+			},
+			Validate: func(hr hostResult, getDNSfunc getDNSrecordFunc) error {
+				err := commonValidation(hr, ReconcileStatusContinue, getDNSfunc)
 				if err != nil {
 					return err
 				}
 				if !metadata.HasAnnotation(hr.Accessor, ANNOTATION_HCG_CUSTOM_HOST_REPLACED) {
 					return fmt.Errorf("expected the custom host annotation to be present")
-				}
-				generatedHost, ok := hr.Accessor.GetAnnotations()[ANNOTATION_HCG_HOST]
-				if !ok {
-					return ErrGeneratedHostMissing
 				}
 				for _, host := range hr.Accessor.GetHosts() {
 					if host != generatedHost {
@@ -115,10 +104,10 @@ func TestReconcileHost(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			reconciler := &HostReconciler{
-				ManagedDomain: managedDomain,
+				GetDNS: tc.GetDNSfunc,
 			}
 
-			if err := tc.Validate(buildResult(reconciler, tc.Accessor())); err != nil {
+			if err := tc.Validate(buildResult(reconciler, tc.Accessor()), tc.GetDNSfunc); err != nil {
 				t.Fatalf("fail: %s", err)
 			}
 
@@ -512,6 +501,16 @@ func TestProcessCustomHostValidation(t *testing.T) {
 				func(ctx context.Context, i Interface) error {
 					return nil
 				},
+				func(ctx context.Context, accessor Interface) (*v1.DNSRecord, error) {
+					return &v1.DNSRecord{
+							ObjectMeta: metav1.ObjectMeta{
+								Annotations: map[string]string{
+									ANNOTATION_HCG_HOST: "generated.host.net",
+								},
+							},
+						},
+						nil
+				},
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -561,5 +560,32 @@ func TestProcessCustomHostValidation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAddHostAnnotations(t *testing.T) {
+
+	type args struct {
+		record metav1.Object
+		host   string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{
+			name: "test host generated",
+			args: args{
+				record: &v1.DNSRecord{},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			AddHostAnnotations(tt.args.record, tt.args.host)
+		})
+		if !metadata.HasAnnotation(tt.args.record, ANNOTATION_HCG_HOST) {
+			t.Fatalf("generated host annotation wasn't added")
+		}
 	}
 }
